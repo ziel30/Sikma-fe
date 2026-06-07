@@ -1,0 +1,130 @@
+/**
+ * Centralised icon set for SIKMA, built on Phosphor Icons.
+ *
+ * Re-exporting here means screens import semantic names (e.g. `Icons.Money`)
+ * instead of reaching into `@phosphor-icons/react` directly, so swapping an
+ * icon or its default weight only happens in one place.
+ */
+import {
+  ArrowLeft,
+  Bell,
+  Calculator,
+  CaretDown,
+  CaretRight,
+  Certificate,
+  ChatCircleDots,
+  Check,
+  CheckCircle,
+  Clock,
+  Coins,
+  Confetti,
+  Crown,
+  Diamond,
+  Divide,
+  Fire,
+  Gift,
+  Heart,
+  House,
+  Info,
+  GearSix,
+  Key,
+  Lightning,
+  List,
+  Lock,
+  MagnifyingGlass,
+  Medal,
+  Money,
+  Moon,
+  PencilSimple,
+  Plant,
+  Plus,
+  Question,
+  Rocket,
+  ShieldCheck,
+  SignOut,
+  Smiley,
+  SmileyMeh,
+  SmileyWink,
+  Sparkle,
+  SpeakerHigh,
+  Star,
+  Storefront,
+  Target,
+  Translate,
+  TreasureChest,
+  Trophy,
+  UserMinus,
+  UserPlus,
+  UsersThree,
+  X,
+  type Icon,
+} from "@phosphor-icons/react";
+
+export type { Icon };
+
+export const Icons = {
+  back: ArrowLeft,
+  check: CheckCircle,
+  // course benefits
+  money: Money,
+  lightning: Lightning,
+  fun: Confetti,
+  // starting level
+  beginner: Plant,
+  intermediate: Rocket,
+  // daily goal intensity
+  casual: SmileyMeh,
+  regular: Smiley,
+  serious: SmileyWink,
+  intense: Fire,
+  // home dashboard
+  home: House,
+  trophy: Trophy,
+  medal: Medal,
+  shop: Storefront,
+  forum: ChatCircleDots,
+  coin: Coins,
+  bell: Bell,
+  arrow: CaretRight,
+  strike: Fire,
+  gem: Diamond,
+  energy: Lightning,
+  calculator: Calculator,
+  // learning path nodes
+  star: Star,
+  chest: TreasureChest,
+  lock: Lock,
+  // quiz results
+  sparkle: Sparkle,
+  clock: Clock,
+  target: Target,
+  // leaderboard
+  crown: Crown,
+  info: Info,
+  // profile
+  edit: PencilSimple,
+  gift: Gift,
+  certificate: Certificate,
+  caretDown: CaretDown,
+  menu: List,
+  heart: Heart,
+  // friends
+  tick: Check,
+  search: MagnifyingGlass,
+  friends: UsersThree,
+  addFriend: UserPlus,
+  removeFriend: UserMinus,
+  settings: GearSix,
+  // settings
+  moon: Moon,
+  language: Translate,
+  privacy: ShieldCheck,
+  help: Question,
+  logout: SignOut,
+  sound: SpeakerHigh,
+  key: Key,
+  // decorative math glyphs
+  plus: Plus,
+  times: X,
+  divide: Divide,
+} satisfies Record<string, Icon>;
