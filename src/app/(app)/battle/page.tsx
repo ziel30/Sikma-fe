@@ -1,153 +1,229 @@
 "use client";
 
-import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { getUserId } from "@/lib/auth/get-user-id";
+import { generateOptions, parseQuestion } from "@/lib/match/generate-options";
+import { disconnectMatchSocket, getMatchSocket } from "@/lib/match/socket";
 import { cn } from "@/lib/utils";
+import { getMyStrike, type StrikeInfo } from "@/features/strike/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Phase = "countdown" | "quiz" | "result";
+type Phase = "countdown" | "quiz" | "feedback" | "result";
 type CountdownStep = 1 | 2 | 3 | "go";
 
-// ─── Placeholder quiz data ────────────────────────────────────────────────────
+interface QuestionState {
+  roundNumber: number;
+  totalRounds: number;
+  question: string;
+  options: string[];
+  answerIndex: number; // posisi jawaban benar di options[]
+}
 
-const QUESTIONS = [
-  {
-    question: "Berapa hasil dari 48 ÷ 6 + 5?",
-    options: ["11", "13", "8", "14"],
-    answer: 1, // index of correct option
-  },
-  {
-    question: "Jika x + 12 = 20, maka x = ?",
-    options: ["6", "8", "10", "32"],
-    answer: 1,
-  },
-  {
-    question: "Berapakah 15% dari 200?",
-    options: ["20", "25", "30", "35"],
-    answer: 2,
-  },
-  {
-    question: "√144 = ?",
-    options: ["10", "11", "12", "13"],
-    answer: 2,
-  },
-  {
-    question: "3² + 4² = ?",
-    options: ["25", "14", "49", "7"],
-    answer: 0,
-  },
-];
+interface Scores {
+  player1: { userId: number; score: number };
+  player2: { userId: number; score: number };
+}
 
+const QUESTION_TIME = 20; // detik
 const ANSWER_LABELS = ["A", "B", "C", "D"];
-const QUESTION_TIME = 10; // seconds per question
 
-// ─── Page ────────────────────────────────────────────────────────────────────
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function BattlePage() {
   const router = useRouter();
   const params = useSearchParams();
   const mode = params.get("mode") ?? "casual";
+  const matchId = Number(params.get("matchId") ?? 0);
 
   const [phase, setPhase] = useState<Phase>("countdown");
-  const [countStep, setCountStep] = useState<CountdownStep>(1);
+  const [countStep, setCountStep] = useState<CountdownStep>(3);
 
-  // Quiz state
-  const [qIndex, setQIndex] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(QUESTION_TIME);
+  const [current, setCurrent] = useState<QuestionState | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const [lastCorrect, setLastCorrect] = useState<number | null>(null);
+  const [timeLeft, setTimeLeft] = useState(QUESTION_TIME);
   const [myScore, setMyScore] = useState(0);
   const [oppScore, setOppScore] = useState(0);
+  const [winnerId, setWinnerId] = useState<number | null>(null);
+  const [roundStartTime, setRoundStartTime] = useState(0);
+  const [strikeInfo, setStrikeInfo] = useState<StrikeInfo | null>(null);
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const userIdRef = useRef<number | null>(null);
 
-  // ── Countdown sequence ──────────────────────────────────────────────────────
+  // ── Countdown ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    const STEPS: CountdownStep[] = [1, 2, 3, "go"];
-    const DURATIONS = [900, 900, 900, 1000]; // ms each step
-    let stepIdx = 0;
+    const STEPS: CountdownStep[] = [3, 2, 1, "go"];
+    let i = 0;
 
-    function advance() {
-      stepIdx++;
-      if (stepIdx < STEPS.length) {
-        setCountStep(STEPS[stepIdx]);
-        setTimeout(advance, DURATIONS[stepIdx]);
+    function next() {
+      i++;
+      if (i < STEPS.length) {
+        setCountStep(STEPS[i]);
+        setTimeout(next, 800);
       } else {
         setPhase("quiz");
       }
     }
-
-    const t = setTimeout(advance, DURATIONS[0]);
+    const t = setTimeout(next, 800);
     return () => clearTimeout(t);
   }, []);
 
-  // ── Per-question timer ──────────────────────────────────────────────────────
-  const advanceQuestion = useCallback(
-    (answeredCorrectly: boolean, answeredByUser: boolean) => {
-      if (timerRef.current) clearInterval(timerRef.current);
-
-      if (answeredByUser && answeredCorrectly) {
-        setMyScore((s) => s + 10);
-      } else if (!answeredByUser || !answeredCorrectly) {
-        // Opponent "answers" — simulated
-        setOppScore((s) => s + 10);
-      }
-
-      const next = qIndex + 1;
-      if (next >= QUESTIONS.length) {
-        setPhase("result");
-        return;
-      }
-
-      setTimeout(() => {
-        setQIndex(next);
-        setSelected(null);
-        setTimeLeft(QUESTION_TIME);
-      }, 800);
-    },
-    [qIndex]
-  );
-
+  // ── Socket setup ────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (phase !== "quiz") return;
+    if (!matchId) return;
+    userIdRef.current = getUserId();
 
-    timerRef.current = setInterval(() => {
-      setTimeLeft((t) => {
-        if (t <= 1) {
-          advanceQuestion(false, false);
-          return QUESTION_TIME;
-        }
-        return t - 1;
-      });
-    }, 1000);
+    const socket = getMatchSocket();
+    if (!socket.connected) socket.connect();
+
+    // Tell server this player is ready — server sends first question only after this
+    const emitReady = () => socket.emit("match_ready", { matchId });
+    if (socket.connected) {
+      emitReady();
+    } else {
+      socket.once("connect", emitReady);
+    }
+
+    socket.on("question", (data: { roundNumber: number; totalRounds: number; question: string }) => {
+      const correct = parseQuestion(data.question);
+      const { options, answerIndex } = generateOptions(correct);
+      setCurrent({ ...data, options, answerIndex });
+      setSelected(null);
+      setLastCorrect(null);
+      setTimeLeft(QUESTION_TIME);
+      setRoundStartTime(Date.now());
+      setPhase("quiz");
+    });
+
+    socket.on("answer_result", (data: {
+      isCorrect: boolean;
+      correctAnswer: number;
+      scores: Scores;
+    }) => {
+      const uid = userIdRef.current;
+      const myS = uid === data.scores.player1.userId
+        ? data.scores.player1.score
+        : data.scores.player2.score;
+      const oppS = uid === data.scores.player1.userId
+        ? data.scores.player2.score
+        : data.scores.player1.score;
+      setMyScore(myS);
+      setOppScore(oppS);
+      setLastCorrect(findOptionIndex(data.correctAnswer));
+      setPhase("feedback");
+    });
+
+    socket.on("round_timeout", (data: { correctAnswer: number; scores: Scores }) => {
+      const uid = userIdRef.current;
+      const myS = uid === data.scores.player1.userId
+        ? data.scores.player1.score
+        : data.scores.player2.score;
+      const oppS = uid === data.scores.player1.userId
+        ? data.scores.player2.score
+        : data.scores.player1.score;
+      setMyScore(myS);
+      setOppScore(oppS);
+      setLastCorrect(findOptionIndex(data.correctAnswer));
+      setPhase("feedback");
+    });
+
+    socket.on("match_end", (data: { winnerId: number; scores: Scores }) => {
+      setWinnerId(data.winnerId);
+      const uid = userIdRef.current;
+      const myS = uid === data.scores.player1.userId
+        ? data.scores.player1.score
+        : data.scores.player2.score;
+      const oppS = uid === data.scores.player1.userId
+        ? data.scores.player2.score
+        : data.scores.player1.score;
+      setMyScore(myS);
+      setOppScore(oppS);
+      setPhase("result");
+      // Ambil info strike terbaru setelah match selesai
+      if (mode === "casual") {
+        getMyStrike().then(setStrikeInfo).catch(() => null);
+      }
+    });
+
+    socket.on("opponent_disconnected", () => {
+      setWinnerId(userIdRef.current);
+      setPhase("result");
+    });
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      socket.off("question");
+      socket.off("answer_result");
+      socket.off("round_timeout");
+      socket.off("match_end");
+      socket.off("opponent_disconnected");
     };
-  }, [phase, qIndex, advanceQuestion]);
+  }, [matchId]);
 
-  function handleAnswer(idx: number) {
-    if (selected !== null) return;
+  // ── Per-question countdown timer ────────────────────────────────────────────
+  useEffect(() => {
+    if (phase !== "quiz") {
+      if (timerRef.current) clearInterval(timerRef.current);
+      return;
+    }
+    timerRef.current = setInterval(() => {
+      setTimeLeft((t) => Math.max(0, t - 1));
+    }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [phase, current?.roundNumber]);
+
+  // ── Answer handler ──────────────────────────────────────────────────────────
+  const handleAnswer = useCallback((idx: number) => {
+    if (selected !== null || !current || !matchId) return;
     setSelected(idx);
-    const correct = idx === QUESTIONS[qIndex].answer;
-    advanceQuestion(correct, true);
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    const socket = getMatchSocket();
+    socket.emit("submit_answer", {
+      matchId,
+      roundNumber: current.roundNumber,
+      answer: Number(current.options[idx]),
+      responseTimeMs: Date.now() - roundStartTime,
+    });
+  }, [selected, current, matchId, roundStartTime]);
+
+  // ─── Helper: find option index by correct answer value ─────────────────────
+  function findOptionIndex(correctAnswer: number): number {
+    if (!current) return -1;
+    return current.options.findIndex((o) => Math.abs(Number(o) - correctAnswer) < 0.01);
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ─── Render ─────────────────────────────────────────────────────────────────
   if (phase === "countdown") return <CountdownScreen step={countStep} />;
-  if (phase === "result")
+
+  if (phase === "result") {
+    const won = winnerId === userIdRef.current;
+    const draw = winnerId === null;
     return (
       <ResultScreen
         myScore={myScore}
         oppScore={oppScore}
+        won={won}
+        draw={draw}
         mode={mode}
-        onHome={() => router.replace("/learn")}
-        onPlayAgain={() => router.replace("/casual")}
+        strikeInfo={strikeInfo}
+        onHome={() => { disconnectMatchSocket(); router.replace("/learn"); }}
+        onPlayAgain={() => { disconnectMatchSocket(); router.replace("/casual"); }}
       />
     );
+  }
 
-  const q = QUESTIONS[qIndex];
+  if (!current) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <p className="font-bold text-muted-foreground animate-pulse">Menunggu soal pertama...</p>
+      </div>
+    );
+  }
+
   const timerPct = (timeLeft / QUESTION_TIME) * 100;
 
   return (
@@ -156,7 +232,7 @@ export default function BattlePage() {
       <header className="flex items-center justify-between bg-brand px-5 py-3">
         <ScoreChip label="Lawan" score={oppScore} />
         <span className="text-sm font-extrabold text-white/80">
-          {qIndex + 1}/{QUESTIONS.length}
+          {current.roundNumber}/{current.totalRounds}
         </span>
         <ScoreChip label="Kamu" score={myScore} flip />
       </header>
@@ -176,41 +252,39 @@ export default function BattlePage() {
       <main className="flex flex-1 flex-col gap-6 px-5 pt-8 pb-6">
         <div className="flex flex-col items-center gap-3 rounded-[28px] bg-brand-soft px-6 py-8 text-center">
           <p className="text-xs font-bold uppercase tracking-widest text-brand">
-            Soal {qIndex + 1}
+            Soal {current.roundNumber}
           </p>
           <p className="text-2xl font-extrabold leading-snug text-foreground">
-            {q.question}
+            {current.question}
           </p>
-          <div
-            className={cn(
-              "mt-1 text-3xl font-black tabular-nums transition-colors",
-              timeLeft <= 3 ? "text-red-500" : "text-brand"
-            )}
-          >
-            {timeLeft}s
+          <div className={cn(
+            "mt-1 text-3xl font-black tabular-nums transition-colors",
+            timeLeft <= 5 ? "text-red-500" : "text-brand"
+          )}>
+            {phase === "quiz" ? `${timeLeft}s` : "⏱"}
           </div>
         </div>
 
-        {/* Answer options */}
+        {/* Options */}
         <div className="grid grid-cols-2 gap-3">
-          {q.options.map((opt, i) => {
+          {current.options.map((opt, i) => {
             const isSelected = selected === i;
-            const isCorrect = i === q.answer;
-            const revealed = selected !== null;
+            const isCorrect = i === lastCorrect;
+            const revealed = phase === "feedback";
 
             let style = "border-2 border-muted bg-background text-foreground";
             if (revealed && isCorrect) style = "border-2 border-green-400 bg-green-50 text-green-700";
-            else if (revealed && isSelected && !isCorrect)
-              style = "border-2 border-red-400 bg-red-50 text-red-700";
+            else if (revealed && isSelected && !isCorrect) style = "border-2 border-red-400 bg-red-50 text-red-700";
+            else if (isSelected && !revealed) style = "border-2 border-brand bg-brand-soft text-brand";
 
             return (
               <button
                 key={i}
                 onClick={() => handleAnswer(i)}
-                disabled={selected !== null}
+                disabled={selected !== null || phase === "feedback"}
                 className={cn(
                   "flex items-center gap-3 rounded-2xl px-4 py-4 text-left font-extrabold transition active:scale-95 disabled:cursor-not-allowed",
-                  style
+                  style,
                 )}
               >
                 <span className="grid size-7 shrink-0 place-items-center rounded-full bg-brand text-xs font-black text-white">
@@ -221,6 +295,12 @@ export default function BattlePage() {
             );
           })}
         </div>
+
+        {phase === "feedback" && (
+          <p className="text-center text-sm font-bold text-muted-foreground animate-pulse">
+            Menunggu soal berikutnya...
+          </p>
+        )}
       </main>
     </div>
   );
@@ -228,69 +308,33 @@ export default function BattlePage() {
 
 // ─── Countdown ────────────────────────────────────────────────────────────────
 
-const COUNT_CONFIG: Record<
-  CountdownStep,
-  { bg: string; text: string; label: string; raccoon?: boolean }
-> = {
-  1: { bg: "bg-accent-yellow", text: "text-white", label: "1" },
-  2: { bg: "bg-accent-yellow", text: "text-white", label: "2" },
+const COUNT_CONFIG: Record<CountdownStep, { bg: string; text: string; label: string }> = {
   3: { bg: "bg-brand", text: "text-white", label: "3" },
-  go: { bg: "bg-brand", text: "text-accent-yellow", label: "GOO!!!", raccoon: true },
+  2: { bg: "bg-accent-yellow", text: "text-white", label: "2" },
+  1: { bg: "bg-accent-yellow", text: "text-white", label: "1" },
+  go: { bg: "bg-brand", text: "text-accent-yellow", label: "GOO!!!" },
 };
 
 function CountdownScreen({ step }: { step: CountdownStep }) {
   const cfg = COUNT_CONFIG[step];
-
   return (
-    <div
-      key={String(step)}
-      className={cn(
-        "fixed inset-0 z-50 flex flex-col items-center justify-center animate-in zoom-in-75 fade-in duration-300",
-        cfg.bg
-      )}
-    >
-      <p
-        className={cn(
-          "select-none font-black leading-none tracking-tight",
-          cfg.raccoon ? "text-7xl" : "text-[12rem]",
-          cfg.text
-        )}
-      >
+    <div key={String(step)} className={cn(
+      "fixed inset-0 z-50 flex flex-col items-center justify-center animate-in zoom-in-75 fade-in duration-300",
+      cfg.bg,
+    )}>
+      <p className={cn("select-none font-black leading-none tracking-tight", cfg.text,
+        step === "go" ? "text-7xl" : "text-[12rem]")}>
         {cfg.label}
       </p>
-
-      {cfg.raccoon && (
-        <Image
-          src="/Asset/Stirke/strikerakun.svg"
-          alt="Rakun Goo"
-          width={220}
-          height={220}
-          className="mt-6 h-56 w-auto"
-          priority
-        />
-      )}
     </div>
   );
 }
 
 // ─── Score chip ───────────────────────────────────────────────────────────────
 
-function ScoreChip({
-  label,
-  score,
-  flip,
-}: {
-  label: string;
-  score: number;
-  flip?: boolean;
-}) {
+function ScoreChip({ label, score, flip }: { label: string; score: number; flip?: boolean }) {
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2",
-        flip && "flex-row-reverse"
-      )}
-    >
+    <div className={cn("flex items-center gap-2", flip && "flex-row-reverse")}>
       <div className="grid size-9 place-items-center rounded-full bg-white/20 text-xl">
         {flip ? "🧑" : "🐺"}
       </div>
@@ -304,170 +348,74 @@ function ScoreChip({
 
 // ─── Result ───────────────────────────────────────────────────────────────────
 
-// Simulated ranked point deltas — replace with real API values.
-const RANKED_POINTS_WIN = 50;
-const RANKED_POINTS_DRAW = 0;
-const RANKED_POINTS_LOSE = -20;
-const RANKED_RANK_BEFORE = 179;
-const RANKED_RANK_AFTER_WIN = 142;
-
 function ResultScreen({
-  myScore,
-  oppScore,
-  mode,
-  onHome,
-  onPlayAgain,
+  myScore, oppScore, won, draw, mode, strikeInfo, onHome, onPlayAgain,
 }: {
-  myScore: number;
-  oppScore: number;
-  mode: string;
-  onHome: () => void;
-  onPlayAgain: () => void;
+  myScore: number; oppScore: number; won: boolean; draw: boolean;
+  mode: string; strikeInfo: StrikeInfo | null; onHome: () => void; onPlayAgain: () => void;
 }) {
-  const won = myScore > oppScore;
-  const draw = myScore === oppScore;
-
-  if (mode === "casual") return <CasualResult myScore={myScore} oppScore={oppScore} onHome={onHome} onPlayAgain={onPlayAgain} />;
-  return <RankedResult won={won} draw={draw} myScore={myScore} oppScore={oppScore} onHome={onHome} />;
-}
-
-function CasualResult({
-  myScore,
-  oppScore,
-  onHome,
-  onPlayAgain,
-}: {
-  myScore: number;
-  oppScore: number;
-  onHome: () => void;
-  onPlayAgain: () => void;
-}) {
-  return (
-    <div className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-8 px-6 text-center">
-      <p className="text-3xl font-extrabold text-foreground">Hasil Pertandingan</p>
-
-      {/* Score comparison */}
-      <div className="w-full rounded-[28px] bg-muted px-8 py-8 flex items-center justify-center gap-8">
-        <div className="flex flex-col items-center gap-1">
-          <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Lawan</p>
-          <p className="text-6xl font-black text-foreground">{oppScore}</p>
-        </div>
-        <span className="text-2xl font-black text-muted-foreground">vs</span>
-        <div className="flex flex-col items-center gap-1">
-          <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Kamu</p>
-          <p className="text-6xl font-black text-brand">{myScore}</p>
-        </div>
-      </div>
-
-      {/* Two action buttons */}
-      <div className="flex w-full flex-col gap-3">
-        <button
-          onClick={onPlayAgain}
-          className="w-full rounded-2xl bg-brand py-4 font-extrabold text-base text-white shadow-[0_4px_0_0_var(--brand-dark)] transition active:translate-y-0.5 active:shadow-none"
-        >
-          Main Lagi
-        </button>
-        <button
-          onClick={onHome}
-          className="w-full rounded-2xl border-2 border-muted py-4 font-extrabold text-base text-muted-foreground transition hover:border-foreground hover:text-foreground active:scale-95"
-        >
-          Keluar
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function RankedResult({
-  won,
-  draw,
-  myScore,
-  oppScore,
-  onHome,
-}: {
-  won: boolean;
-  draw: boolean;
-  myScore: number;
-  oppScore: number;
-  onHome: () => void;
-}) {
-  const pointDelta = won ? RANKED_POINTS_WIN : draw ? RANKED_POINTS_DRAW : RANKED_POINTS_LOSE;
-  const rankAfter = won ? RANKED_RANK_AFTER_WIN : RANKED_RANK_BEFORE;
+  const outcome = won ? "MENANG!" : draw ? "SERI" : "KALAH";
 
   return (
-    <div
-      className={cn(
-        "mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-6 px-6 text-center",
-        won ? "bg-brand" : "bg-background"
-      )}
-    >
-      {/* Outcome label */}
-      <p
-        className={cn(
-          "text-6xl font-black",
-          won ? "text-accent-yellow" : draw ? "text-foreground" : "text-red-500"
-        )}
-      >
-        {won ? "MENANG!" : draw ? "SERI" : "KALAH"}
+    <div className={cn(
+      "mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center gap-6 px-6 text-center",
+      won && "bg-brand",
+    )}>
+      <p className={cn("text-6xl font-black",
+        won ? "text-accent-yellow" : draw ? "text-foreground" : "text-red-500")}>
+        {outcome}
       </p>
 
-      {/* Score comparison */}
       <div className={cn(
-        "w-full rounded-[28px] px-8 py-6 flex items-center justify-center gap-8",
-        won ? "bg-white/15" : "bg-muted"
+        "w-full rounded-[28px] px-8 py-8 flex items-center justify-center gap-8",
+        won ? "bg-white/15" : "bg-muted",
       )}>
         <div className="flex flex-col items-center gap-1">
           <p className={cn("text-xs font-bold uppercase tracking-widest", won ? "text-white/60" : "text-muted-foreground")}>Lawan</p>
-          <p className={cn("text-5xl font-black", won ? "text-white" : "text-foreground")}>{oppScore}</p>
+          <p className={cn("text-6xl font-black", won ? "text-white" : "text-foreground")}>{oppScore}</p>
         </div>
         <span className={cn("text-2xl font-black", won ? "text-white/40" : "text-muted-foreground")}>vs</span>
         <div className="flex flex-col items-center gap-1">
           <p className={cn("text-xs font-bold uppercase tracking-widest", won ? "text-white/60" : "text-muted-foreground")}>Kamu</p>
-          <p className={cn("text-5xl font-black", won ? "text-accent-yellow" : "text-foreground")}>{myScore}</p>
+          <p className={cn("text-5xl font-black", won ? "text-accent-yellow" : "text-brand")}>{myScore}</p>
         </div>
       </div>
 
-      {/* Ranked point change — shown for all outcomes */}
-      <div className={cn(
-        "w-full rounded-[28px] px-6 py-5 flex flex-col gap-3",
-        won ? "bg-white/15" : "bg-muted"
-      )}>
-        <div className="flex items-center justify-between">
-          <p className={cn("text-sm font-bold", won ? "text-white/70" : "text-muted-foreground")}>Poin Ranked</p>
-          <p className={cn(
-            "text-lg font-black",
-            pointDelta > 0 ? (won ? "text-accent-yellow" : "text-green-500") : pointDelta < 0 ? "text-red-500" : "text-muted-foreground"
-          )}>
-            {pointDelta > 0 ? `+${pointDelta}` : pointDelta === 0 ? "±0" : pointDelta}
-          </p>
-        </div>
-        {won && (
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-bold text-white/70">Peringkat</p>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-white/50 line-through">#{RANKED_RANK_BEFORE}</span>
-              <span className="text-sm font-black text-accent-yellow">→ #{rankAfter}</span>
+      {mode === "casual" && strikeInfo && (
+        <div className={cn(
+          "w-full rounded-2xl px-6 py-4 flex items-center justify-between",
+          won ? "bg-white/15" : "bg-muted",
+        )}>
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🔥</span>
+            <div className="text-left">
+              <p className={cn("text-xs font-bold uppercase tracking-widest",
+                won ? "text-white/60" : "text-muted-foreground")}>Strike Harian</p>
+              <p className={cn("text-lg font-black", won ? "text-white" : "text-foreground")}>
+                {strikeInfo.currentStreak} hari
+              </p>
             </div>
           </div>
-        )}
-        {won && (
-          <p className="text-xs font-bold text-white/60 text-left">
-            🏆 Kamu naik di papan peringkat!
-          </p>
-        )}
-      </div>
+          <span className={cn("text-xs font-bold px-3 py-1 rounded-full",
+            strikeInfo.todayCompleted
+              ? (won ? "bg-white/20 text-white" : "bg-green-100 text-green-700")
+              : (won ? "bg-white/10 text-white/60" : "bg-muted text-muted-foreground")
+          )}>
+            {strikeInfo.todayCompleted ? "Hari ini ✓" : "Belum"}
+          </span>
+        </div>
+      )}
 
-      <button
-        onClick={onHome}
-        className={cn(
-          "w-full rounded-2xl py-4 font-extrabold text-base transition active:translate-y-0.5 active:shadow-none",
-          won
-            ? "bg-accent-yellow text-zinc-900 shadow-[0_4px_0_0_var(--accent-yellow-dark)]"
-            : "bg-brand text-white shadow-[0_4px_0_0_var(--brand-dark)]"
+      <div className="flex w-full flex-col gap-3">
+        {mode === "casual" && (
+          <button onClick={onPlayAgain} className="w-full rounded-2xl bg-brand py-4 font-extrabold text-base text-white shadow-[0_4px_0_0_var(--brand-dark)] transition active:translate-y-0.5 active:shadow-none">
+            Main Lagi
+          </button>
         )}
-      >
-        Kembali ke Beranda
-      </button>
+        <button onClick={onHome} className="w-full rounded-2xl border-2 border-muted py-4 font-extrabold text-base text-muted-foreground transition hover:border-foreground hover:text-foreground active:scale-95">
+          Keluar
+        </button>
+      </div>
     </div>
   );
 }

@@ -2,47 +2,48 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { getMyProfile, type MyProfile } from "@/features/profile/api";
+import { getMyStrike, type StrikeInfo } from "@/features/strike/api";
 import { BottomNav } from "@/shared/components/layout/bottom-nav";
 import { Icons } from "@/shared/components/brand/icons";
 import { cn } from "@/lib/utils";
-
-// Placeholder data — replace with real API data when backend is ready.
-const user = {
-  name: "Aziz Penjinak Naga",
-  level: 20,
-  levelProgress: 70,
-  strike: 20,
-  gems: 179,
-  avatar: "/Asset/profile/profile1.svg",
-};
 
 const LEVELS = [
   { id: 1, label: "Postulat", asset: "/Asset/Level/Level1.svg" },
   { id: 2, label: "Aritmetika", asset: "/Asset/Level/Level1.svg" },
   { id: 3, label: "Aljabar", asset: "/Asset/Level/Level1.svg" },
 ];
+const DOT_COUNT = 9;
 
-const CURRENT_LEVEL_INDEX = 0;
+// XP needed to complete a given level (level 1 = 500 XP, level 2 = 1000 XP, …).
+function levelProgress(xp: number, level: number): number {
+  const prev = ((level - 1) * level) / 2 * 500;
+  const next = (level * (level + 1)) / 2 * 500;
+  return Math.min(100, Math.max(0, ((xp - prev) / (next - prev)) * 100));
+}
 
 export default function DashboardPage() {
-  const [levelIdx, setLevelIdx] = useState(CURRENT_LEVEL_INDEX);
+  const [levelIdx, setLevelIdx] = useState(0);
+  const [profile, setProfile] = useState<MyProfile | null>(null);
+  const [strike, setStrike] = useState<StrikeInfo | null>(null);
+
+  useEffect(() => {
+    getMyProfile().then(setProfile).catch(console.error);
+    getMyStrike().then(setStrike).catch(console.error);
+  }, []);
+
   const currentLevel = LEVELS[levelIdx];
-  const DOT_COUNT = 9;
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 px-4 pt-5 pb-28 overflow-hidden">
-      {/* Profile Header */}
-      <ProfileHeader />
+      <ProfileHeader profile={profile} />
+      <StrikeCard streak={strike?.currentStreak ?? 0} />
 
-      {/* Strike Card */}
-      <StrikeCard strike={user.strike} />
-
-      {/* Raccoon / Level Mascot */}
+      {/* Level Mascot carousel */}
       <section className="flex flex-col items-center gap-3">
         <div className="relative flex w-full items-center justify-center">
-          {/* Left arrow */}
           <button
             onClick={() => setLevelIdx((i) => Math.max(0, i - 1))}
             disabled={levelIdx === 0}
@@ -52,7 +53,6 @@ export default function DashboardPage() {
             <Icons.arrowLeft size={24} weight="bold" />
           </button>
 
-          {/* Mascot image */}
           <div className="relative flex size-52 items-center justify-center">
             <Image
               src={currentLevel.asset}
@@ -62,7 +62,6 @@ export default function DashboardPage() {
             />
           </div>
 
-          {/* Right arrow */}
           <button
             onClick={() => setLevelIdx((i) => Math.min(LEVELS.length - 1, i + 1))}
             disabled={levelIdx === LEVELS.length - 1}
@@ -73,29 +72,21 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {/* Level label */}
         <p className="text-lg font-extrabold text-foreground">{currentLevel.label}</p>
 
-        {/* Dot progress */}
         <div className="flex items-center gap-1.5">
           {Array.from({ length: DOT_COUNT }).map((_, i) => (
             <span
               key={i}
               className={cn(
                 "size-2.5 rounded-full transition-all",
-                i === levelIdx
-                  ? "size-3 bg-brand"
-                  : i < levelIdx
-                  ? "bg-brand/40"
-                  : "bg-muted"
+                i === levelIdx ? "size-3 bg-brand" : i < levelIdx ? "bg-brand/40" : "bg-muted"
               )}
             />
           ))}
         </div>
 
-        <p className="text-sm font-bold text-muted-foreground">
-          Level {currentLevel.id}
-        </p>
+        <p className="text-sm font-bold text-muted-foreground">Level {currentLevel.id}</p>
       </section>
 
       {/* Casual / Ranked buttons */}
@@ -121,27 +112,34 @@ export default function DashboardPage() {
   );
 }
 
-function ProfileHeader() {
+function ProfileHeader({ profile }: { profile: MyProfile | null }) {
+  const firstName = profile?.name?.split(" ")[0] ?? "…";
+  const level = profile?.level ?? 1;
+  const xp = profile?.xp ?? 0;
+  const progress = levelProgress(xp, level);
+  const avatarEmoji = profile?.avatar?.emoji;
+  const avatarBg = profile?.avatar?.bg ?? "bg-brand-soft";
+
   return (
     <header className="flex items-center gap-3">
-      <Image
-        src={user.avatar}
-        alt="Avatar"
-        width={44}
-        height={44}
-        className="size-11 shrink-0 rounded-full bg-brand-soft ring-2 ring-brand"
-      />
+      {avatarEmoji ? (
+        <span className={cn("grid size-11 shrink-0 place-items-center rounded-full text-2xl ring-2 ring-brand", avatarBg)}>
+          {avatarEmoji}
+        </span>
+      ) : (
+        <div className="size-11 shrink-0 animate-pulse rounded-full bg-brand-soft ring-2 ring-brand" />
+      )}
       <div className="min-w-0 flex-1">
-        <p className="truncate font-extrabold leading-tight">{user.name.split(" ")[0]}</p>
+        <p className="truncate font-extrabold leading-tight">{firstName}</p>
         <div className="mt-1 flex items-center gap-2">
           <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-muted">
             <div
-              className="h-full rounded-full bg-linear-to-r from-green-400 to-green-500"
-              style={{ width: `${user.levelProgress}%` }}
+              className="h-full rounded-full bg-linear-to-r from-green-400 to-green-500 transition-all duration-700"
+              style={{ width: `${progress}%` }}
             />
           </div>
           <span className="text-xs font-extrabold whitespace-nowrap text-muted-foreground">
-            Level {user.level}
+            Level {level}
           </span>
         </div>
       </div>
@@ -149,31 +147,27 @@ function ProfileHeader() {
   );
 }
 
-function StrikeCard({ strike }: { strike: number }) {
+function StrikeCard({ streak }: { streak: number }) {
   return (
     <section className="relative overflow-hidden rounded-[28px] bg-brand px-5 pt-5 pb-4 text-white">
-      {/* Pink blob bottom-left */}
+      {/* Blobs */}
       <span className="absolute -bottom-6 -left-6 size-24 rounded-full bg-purple-400/50" />
-      {/* Yellow blob bottom-right behind raccoon */}
       <span className="absolute -bottom-4 right-8 size-24 rounded-full bg-accent-yellow/70" />
 
-      {/* Top row: content left + raccoon right */}
+      {/* Top row: label + number left, sparkles + raccoon right */}
       <div className="relative flex items-start">
-        {/* Left: label + number */}
         <div className="flex-1">
           <p className="text-base font-extrabold">Strike</p>
-          <p className="mt-1 text-8xl font-black leading-none text-accent-yellow">
-            {strike}
-          </p>
+          <p className="mt-1 text-8xl font-black leading-none text-accent-yellow">{streak}</p>
         </div>
 
-        {/* Sparkles — between number and raccoon, above raccoon */}
+        {/* Sparkles */}
         <div className="absolute top-3 right-32 z-30 flex flex-col items-start gap-1.5">
           <Icons.sparkle size={26} weight="fill" className="text-accent-yellow" />
           <Icons.sparkle size={15} weight="fill" className="ml-4 text-accent-yellow/70" />
         </div>
 
-        {/* Raccoon mascot */}
+        {/* Raccoon */}
         <Image
           src="/Asset/Stirke/strikerakun.svg"
           alt="Rakun Strike"
@@ -183,7 +177,7 @@ function StrikeCard({ strike }: { strike: number }) {
         />
       </div>
 
-      {/* Daily + Guide buttons */}
+      {/* Daily + Guide */}
       <div className="relative z-10 mt-3 grid grid-cols-2 gap-3">
         <Link
           href="/casual"
