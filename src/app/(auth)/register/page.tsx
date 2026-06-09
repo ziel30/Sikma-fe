@@ -6,8 +6,10 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 
+import { registerApi } from "@/features/auth/api";
 import { AuthShell } from "@/features/auth/components/auth-shell";
 import { setSession } from "@/features/auth/lib/session-client";
+import { clearOnboarded } from "@/features/onboarding/lib/storage";
 import { Mascot } from "@/shared/components/brand/mascot";
 import { PrimaryButton } from "@/shared/components/brand/primary-button";
 import { SpeechBubble } from "@/shared/components/brand/speech-bubble";
@@ -18,6 +20,8 @@ import { registerSchema, type RegisterValues } from "@/features/auth/schemas/aut
 export default function RegisterPage() {
   const router = useRouter();
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const {
     register,
@@ -25,10 +29,20 @@ export default function RegisterPage() {
     formState: { errors },
   } = useForm<RegisterValues>({ resolver: zodResolver(registerSchema) });
 
-  // No backend yet — a valid submission opens a session + reveals success.
-  const onSubmit = handleSubmit(() => {
-    setSession();
-    setDone(true);
+  const onSubmit = handleSubmit(async (values) => {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await registerApi({ name: values.name, email: values.email, password: values.password });
+      setSession(res.data.accsess_token, res.data.user?.roles ?? 0);
+      clearOnboarded(); // new account → run onboarding again (flag is per-browser)
+      setDone(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Gagal membuat akun.";
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
   });
 
   if (done) {
@@ -55,12 +69,17 @@ export default function RegisterPage() {
       title="Buat profil"
       subtitle="Simpan progres belajarmu agar tidak hilang."
       footer={
-        <PrimaryButton type="submit" form="register-form">
-          Buat Profil
+        <PrimaryButton type="submit" form="register-form" disabled={loading}>
+          {loading ? "Memuat..." : "Buat Profil"}
         </PrimaryButton>
       }
     >
       <form id="register-form" onSubmit={onSubmit} noValidate>
+        {error && (
+          <p className="mb-3 rounded-lg bg-destructive/10 px-4 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <FieldGroup className="gap-2">
           <TextField
             id="name"

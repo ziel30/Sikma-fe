@@ -14,3 +14,9 @@ export function markOnboarded(): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(ONBOARDED_KEY, "1");
 }
+
+/** Reset the flag so onboarding runs again — called on a fresh registration. */
+export function clearOnboarded(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(ONBOARDED_KEY);
+}

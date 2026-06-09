@@ -5,7 +5,7 @@ import { SESSION_COOKIE } from "@/lib/auth/cookies";
 // Routes reachable without a session. Everything else requires auth.
 const PUBLIC_ROUTES = ["/", "/login", "/register"];
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const isPublic = PUBLIC_ROUTES.includes(pathname);
   const hasSession = Boolean(req.cookies.get(SESSION_COOKIE)?.value);

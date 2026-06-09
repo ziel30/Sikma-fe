@@ -3,8 +3,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 
+import { loginApi } from "@/features/auth/api";
 import { AuthShell } from "@/features/auth/components/auth-shell";
 import { setSession } from "@/features/auth/lib/session-client";
 import { PrimaryButton } from "@/shared/components/brand/primary-button";
@@ -14,6 +16,8 @@ import { loginSchema, type LoginValues } from "@/features/auth/schemas/auth.sche
 
 export default function LoginPage() {
   const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const {
     register,
@@ -21,10 +25,18 @@ export default function LoginPage() {
     formState: { errors },
   } = useForm<LoginValues>({ resolver: zodResolver(loginSchema) });
 
-  // No backend yet — a valid submission opens a session and enters the app.
-  const onSubmit = handleSubmit(() => {
-    setSession();
-    router.push("/learn");
+  const onSubmit = handleSubmit(async (values) => {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await loginApi({ email: values.identifier, password: values.password });
+      setSession(res.data.accsess_token, res.data.user.roles);
+      router.push(res.data.user.roles >= 1 ? "/admin" : "/learn");
+    } catch {
+      setError("Email atau kata sandi salah.");
+    } finally {
+      setLoading(false);
+    }
   });
 
   return (
@@ -33,12 +45,17 @@ export default function LoginPage() {
       title="Masuk"
       subtitle="Senang melihatmu lagi! Lanjutkan belajar matematika."
       footer={
-        <PrimaryButton type="submit" form="login-form">
-          Masuk
+        <PrimaryButton type="submit" form="login-form" disabled={loading}>
+          {loading ? "Memuat..." : "Masuk"}
         </PrimaryButton>
       }
     >
       <form id="login-form" onSubmit={onSubmit} noValidate>
+        {error && (
+          <p className="mb-3 rounded-lg bg-destructive/10 px-4 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <FieldGroup>
           <TextField
             id="identifier"
