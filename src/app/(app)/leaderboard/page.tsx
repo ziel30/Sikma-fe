@@ -140,7 +140,7 @@ function PodiumSpot({ entry, rank, elevated }: { entry: LeaderboardEntry; rank: 
       </div>
       <p className="mt-4 line-clamp-1 text-sm font-extrabold">{entry.name}</p>
       <p className="text-xs text-muted-foreground">{entry.meta}</p>
-      <p className="mt-1 font-extrabold text-amber-600">{id(entry.score)} <span className="text-xs">XP</span></p>
+      <p className="mt-1 font-extrabold text-amber-600">{id(entry.score)} <span className="text-xs">Poin</span></p>
     </div>
   );
 }
@@ -155,7 +155,7 @@ function RankRow({ entry }: { entry: LeaderboardEntry }) {
         <p className="text-xs text-muted-foreground">{entry.meta}</p>
       </div>
       <span className="font-extrabold text-amber-600">
-        {id(entry.score)} <span className="text-xs font-bold text-muted-foreground">XP</span>
+        {id(entry.score)} <span className="text-xs font-bold text-muted-foreground">Poin</span>
       </span>
     </div>
   );

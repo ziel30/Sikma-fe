@@ -81,7 +81,7 @@ export default function RankedPage() {
         </p>
 
         <PrimaryButton asChild>
-          <Link href="/battle?mode=ranked">Mulai</Link>
+          <Link href="/casual?mode=ranked">Mulai</Link>
         </PrimaryButton>
 
         <p className="text-center text-xs text-muted-foreground italic">

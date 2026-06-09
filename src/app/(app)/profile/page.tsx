@@ -33,6 +33,7 @@ export default function ProfilePage() {
   const bio = profile?.bio ?? "Belum ada bio";
   const xp = profile?.xp ?? 0;
   const level = profile?.level ?? 1;
+  const rankPoints = profile?.rankPoints ?? 0;
   const streak = profile?.streak ?? 0;
   const joinedAt = profile?.joinedAt ?? "—";
   const rank = profile?.rank ?? null;
@@ -107,6 +108,7 @@ export default function ProfilePage() {
           <div className="relative z-10 mt-4 grid max-w-[62%] grid-cols-2 gap-x-4 gap-y-3">
             <GameStat label="Level" value={String(level)} />
             <GameStat label="Total XP" value={id(xp)} />
+            <GameStat label="Poin Rank" value={id(rankPoints)} />
             <GameStat label="Streak" value={`${streak} hari`} />
             <GameStat label="Bergabung" value={joinedAt} />
           </div>

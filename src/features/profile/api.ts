@@ -17,7 +17,10 @@ export interface MyProfile {
   avatar: AvatarDef;
   xp: number;
   coins: number;
+  rankPoints: number;
   level: number;
+  xpIntoLevel: number;
+  xpForNextLevel: number;
   streak: number;
   longestStreak: number;
   joinedAt: string;

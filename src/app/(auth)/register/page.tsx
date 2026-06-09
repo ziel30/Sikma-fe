@@ -9,6 +9,7 @@ import { useForm } from "react-hook-form";
 import { registerApi } from "@/features/auth/api";
 import { AuthShell } from "@/features/auth/components/auth-shell";
 import { setSession } from "@/features/auth/lib/session-client";
+import { clearOnboarded } from "@/features/onboarding/lib/storage";
 import { Mascot } from "@/shared/components/brand/mascot";
 import { PrimaryButton } from "@/shared/components/brand/primary-button";
 import { SpeechBubble } from "@/shared/components/brand/speech-bubble";
@@ -33,7 +34,8 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       const res = await registerApi({ name: values.name, email: values.email, password: values.password });
-      setSession(res.data.accsess_token);
+      setSession(res.data.accsess_token, res.data.user?.roles ?? 0);
+      clearOnboarded(); // new account → run onboarding again (flag is per-browser)
       setDone(true);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Gagal membuat akun.";

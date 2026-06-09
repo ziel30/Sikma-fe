@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { getMyProfile, type MyProfile } from "@/features/profile/api";
-import { getMyStrike, type StrikeInfo } from "@/features/strike/api";
 import { BottomNav } from "@/shared/components/layout/bottom-nav";
 import { Icons } from "@/shared/components/brand/icons";
 import { cn } from "@/lib/utils";
@@ -17,21 +16,12 @@ const LEVELS = [
 ];
 const DOT_COUNT = 9;
 
-// XP needed to complete a given level (level 1 = 500 XP, level 2 = 1000 XP, …).
-function levelProgress(xp: number, level: number): number {
-  const prev = ((level - 1) * level) / 2 * 500;
-  const next = (level * (level + 1)) / 2 * 500;
-  return Math.min(100, Math.max(0, ((xp - prev) / (next - prev)) * 100));
-}
-
 export default function DashboardPage() {
   const [levelIdx, setLevelIdx] = useState(0);
   const [profile, setProfile] = useState<MyProfile | null>(null);
-  const [strike, setStrike] = useState<StrikeInfo | null>(null);
 
   useEffect(() => {
     getMyProfile().then(setProfile).catch(console.error);
-    getMyStrike().then(setStrike).catch(console.error);
   }, []);
 
   const currentLevel = LEVELS[levelIdx];
@@ -39,7 +29,7 @@ export default function DashboardPage() {
   return (
     <div className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 px-4 pt-5 pb-28 overflow-hidden">
       <ProfileHeader profile={profile} />
-      <StrikeCard streak={strike?.currentStreak ?? 0} />
+      <StrikeCard streak={profile?.streak ?? 0} />
 
       {/* Level Mascot carousel */}
       <section className="flex flex-col items-center gap-3">
@@ -115,8 +105,9 @@ export default function DashboardPage() {
 function ProfileHeader({ profile }: { profile: MyProfile | null }) {
   const firstName = profile?.name?.split(" ")[0] ?? "…";
   const level = profile?.level ?? 1;
-  const xp = profile?.xp ?? 0;
-  const progress = levelProgress(xp, level);
+  const xpInto = profile?.xpIntoLevel ?? 0;
+  const xpFor = profile?.xpForNextLevel ?? 500;
+  const progress = xpFor > 0 ? Math.min(100, (xpInto / xpFor) * 100) : 0;
   const avatarEmoji = profile?.avatar?.emoji;
   const avatarBg = profile?.avatar?.bg ?? "bg-brand-soft";
 

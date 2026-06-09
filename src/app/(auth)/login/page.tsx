@@ -30,8 +30,8 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const res = await loginApi({ email: values.identifier, password: values.password });
-      setSession(res.data.accsess_token);
-      router.push("/learn");
+      setSession(res.data.accsess_token, res.data.user.roles);
+      router.push(res.data.user.roles >= 1 ? "/admin" : "/learn");
     } catch {
       setError("Email atau kata sandi salah.");
     } finally {

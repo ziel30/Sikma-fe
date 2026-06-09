@@ -2,26 +2,29 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { getUserId } from "@/lib/auth/get-user-id";
-import { disconnectMatchSocket, getMatchSocket } from "@/lib/match/socket";
+import { disconnectMatchSocket, getMatchSocket, setPendingQuestion } from "@/lib/match/socket";
 import { Icons } from "@/shared/components/brand/icons";
 import { PrimaryButton } from "@/shared/components/brand/primary-button";
 import { cn } from "@/lib/utils";
 
 const CURRENT_USER_AVATAR = "/Asset/profile/profile1.svg";
-const DIFFICULTY = 1; // casual = level mudah
+const BOT_TIMEOUT_MS = 5000;
 
-type MatchState = "idle" | "finding" | "found";
+type MatchState = "idle" | "finding" | "found" | "bot";
 
 export default function CasualPage() {
   const router = useRouter();
+  const params = useSearchParams();
+  const mode = params.get("mode") ?? "casual";
+
   const [state, setState] = useState<MatchState>("idle");
   const [dots, setDots] = useState(0);
   const [opponentId, setOpponentId] = useState<number | null>(null);
-  const [isBot, setIsBot] = useState(false);
+  const [foundAsBot, setFoundAsBot] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const matchIdRef = useRef<number | null>(null);
 
@@ -32,14 +35,39 @@ export default function CasualPage() {
     return () => clearInterval(t);
   }, [state]);
 
-  // Auto-navigasi ke battle saat match ditemukan
+  // 5-second client-side bot fallback — CASUAL only. Ranked waits for the
+  // server to pair a human or a server-side bot, so rank points persist.
+  useEffect(() => {
+    if (state !== "finding" || mode === "ranked") return;
+    const t = setTimeout(() => {
+      const socket = getMatchSocket();
+      socket.emit("leave_queue");
+      socket.off("queue_joined");
+      socket.off("match_found");
+      socket.off("connect_error");
+      socket.off("question");
+      setState("bot");
+    }, BOT_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [state, mode]);
+
+  // Navigate to bot battle after brief "lawan ditemukan" moment
+  useEffect(() => {
+    if (state !== "bot") return;
+    const t = setTimeout(() => {
+      router.push(`/battle?mode=${mode}&bot=true`);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [state, mode, router]);
+
+  // Auto-navigate to real battle when match found
   useEffect(() => {
     if (state !== "found" || matchIdRef.current === null) return;
     const t = setTimeout(() => {
-      router.push(`/battle?matchId=${matchIdRef.current}&mode=casual`);
-    }, 1200);
+      router.push(`/battle?matchId=${matchIdRef.current}&mode=${mode}`);
+    }, 300);
     return () => clearTimeout(t);
-  }, [state, router]);
+  }, [state, mode, router]);
 
   function handleStart() {
     setError(null);
@@ -51,6 +79,7 @@ export default function CasualPage() {
     socket.off("queue_joined");
     socket.off("match_found");
     socket.off("connect_error");
+    socket.off("question");
 
     socket.on("queue_joined", () => setState("finding"));
 
@@ -60,7 +89,7 @@ export default function CasualPage() {
         ? data.opponent.p2.userId
         : data.opponent.p1.userId;
       setOpponentId(opp);
-      setIsBot(data.isBot);
+      setFoundAsBot(data.isBot);
       setState("found");
     });
 
@@ -69,8 +98,11 @@ export default function CasualPage() {
       setState("idle");
     });
 
+    // Buffer any question the server sends before battle page is ready.
+    socket.on("question", setPendingQuestion);
+
     if (!socket.connected) socket.connect();
-    socket.emit("join_queue", { userId, difficulty: DIFFICULTY });
+    socket.emit("join_queue", { userId, difficulty: 1, mode });
   }
 
   function handleCancel() {
@@ -79,17 +111,25 @@ export default function CasualPage() {
     socket.off("queue_joined");
     socket.off("match_found");
     socket.off("connect_error");
+    socket.off("question");
     disconnectMatchSocket();
     setState("idle");
   }
 
+  const isRanked = mode === "ranked";
+  const opponentLabel =
+    state === "found" ? (foundAsBot ? "Bot SIKMA" : `Player #${opponentId}`)
+    : state === "bot" ? "Bot SIKMA"
+    : state === "finding" ? `Mencari${".".repeat(dots)}`
+    : "Lawan";
+
   return (
     <div className="relative mx-auto flex w-full max-w-md flex-1 flex-col overflow-hidden">
       <header className="flex items-center justify-between px-5 pt-5 pb-2">
-        <Link href="/learn" aria-label="Kembali">
+        <Link href={isRanked ? "/ranked" : "/learn"} aria-label="Kembali">
           <Icons.back size={26} weight="bold" />
         </Link>
-        <h1 className="text-lg font-extrabold">Casual</h1>
+        <h1 className="text-lg font-extrabold">{isRanked ? "Ranked" : "Casual"}</h1>
         <button aria-label="Bantuan" className="text-muted-foreground">
           <Icons.info size={24} weight="fill" />
         </button>
@@ -99,22 +139,16 @@ export default function CasualPage() {
         <div className="flex w-full items-center justify-center gap-12">
           {/* Lawan */}
           <div className="flex flex-col items-center gap-2">
-            {state === "found" ? (
+            {(state === "found" || state === "bot") ? (
               <div className="grid size-20 place-items-center rounded-full bg-brand-soft ring-4 ring-brand animate-in zoom-in-75 duration-300 text-3xl">
-                🐺
+                🤖
               </div>
             ) : (
               <div className="grid size-20 place-items-center rounded-full bg-brand-soft ring-4 ring-brand">
                 <span className="text-4xl font-black text-brand">?</span>
               </div>
             )}
-            <p className="text-sm font-bold text-muted-foreground">
-              {state === "found"
-                ? isBot ? "Bot SIKMA" : `Player #${opponentId}`
-                : state === "finding"
-                ? `Mencari${".".repeat(dots)}`
-                : "Lawan"}
-            </p>
+            <p className="text-sm font-bold text-muted-foreground">{opponentLabel}</p>
           </div>
 
           <span className="text-xl font-black text-muted-foreground">VS</span>
@@ -132,9 +166,9 @@ export default function CasualPage() {
           </div>
         </div>
 
-        {state === "found" && (
+        {(state === "found" || state === "bot") && (
           <p className="animate-in fade-in text-sm font-extrabold text-brand">
-            Lawan ditemukan! Memulai...
+            {state === "bot" ? "Bot ditemukan! Memulai..." : "Lawan ditemukan! Memulai..."}
           </p>
         )}
 
@@ -146,7 +180,7 @@ export default function CasualPage() {
 
         {state === "idle" && (
           <PrimaryButton onClick={handleStart} className="w-full max-w-xs">
-            Gass
+            {isRanked ? "Mulai" : "Gass"}
           </PrimaryButton>
         )}
         {state === "finding" && (
@@ -158,16 +192,18 @@ export default function CasualPage() {
           </button>
         )}
 
-        {state !== "found" && (
+        {state !== "found" && state !== "bot" && (
           <p className="text-center text-sm font-bold text-muted-foreground italic">
-            "Jawab Dengan Cepat Dan Tepat"
+            {isRanked
+              ? '"Buktikan kemampuanmu di liga!"'
+              : '"Jawab Dengan Cepat Dan Tepat"'}
           </p>
         )}
       </main>
 
       <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between">
-        <div className="size-32 -translate-x-8 translate-y-8 rounded-full bg-accent-yellow" />
-        <div className="size-40 translate-x-10 translate-y-10 rounded-full bg-accent-yellow" />
+        <div className={cn("size-32 -translate-x-8 translate-y-8 rounded-full", isRanked ? "bg-amber-300" : "bg-accent-yellow")} />
+        <div className={cn("size-40 translate-x-10 translate-y-10 rounded-full", isRanked ? "bg-amber-300" : "bg-accent-yellow")} />
       </div>
     </div>
   );
